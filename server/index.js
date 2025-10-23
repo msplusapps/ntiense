@@ -13,9 +13,6 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-app.use(express.static('public'));
-app.use(express.json());
-
 app.get('/embed.js', (req, res) => {
     fs.readFile(path.join(__dirname, '..', 'public', 'embed.js'), 'utf8', (err, data) => {
         if (err) {
@@ -27,6 +24,9 @@ app.get('/embed.js', (req, res) => {
         res.type('application/javascript').send(script);
     });
 });
+
+app.use(express.static('public'));
+app.use(express.json());
 
 let adminSocket = null;
 const users = {};
@@ -46,6 +46,15 @@ io.on('connection', (socket) => {
         });
     });
 
+    socket.on('adminConnect', (data) => {
+        jwt.verify(data.token, process.env.JWT_SECRET, (err, user) => {
+            if (!err && user) {
+                adminSocket = socket;
+                console.log('Admin connected');
+            }
+        });
+    });
+
     socket.on('userMessage', (data) => {
         const { message } = data;
         const conversationId = users[socket.id]?.conversationId;
@@ -56,7 +65,12 @@ io.on('connection', (socket) => {
                 if (!err) {
                     db.run('UPDATE conversations SET lastMessage = ?, updatedAt = ? WHERE id = ?',
                            [message, timestamp, conversationId]);
-                    io.to(conversationId).emit('userMessage', { chatId: conversationId, message, timestamp, sender: 'user' });
+
+                    const payload = { chatId: conversationId, message, timestamp, sender: 'user' };
+                    io.to(conversationId).emit('userMessage', payload);
+                    if (adminSocket) {
+                        adminSocket.emit('userMessage', payload);
+                    }
                 }
             });
         }

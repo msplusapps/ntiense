@@ -57,6 +57,10 @@
             const socket = io();
             let currentChatId = null;
 
+            socket.on('connect', () => {
+                socket.emit('adminConnect', { token: localStorage.getItem('adminToken') });
+            });
+
             // Load initial conversations
             axios.get('/api/conversations', {
                 headers: {
@@ -69,13 +73,28 @@
                 conversations.forEach(conversation => {
                     const elem = document.createElement('div');
                     elem.className = 'p-3 rounded hover:bg-gray-100 cursor-pointer';
-                    elem.innerHTML = `
-                        <div class="flex justify-between">
-                            <span class="font-medium">${conversation.userId}</span>
-                            <span class="text-sm text-gray-500">${new Date(conversation.updatedAt).toLocaleTimeString()}</span>
-                        </div>
-                        <p class="text-sm text-gray-600 truncate">${conversation.lastMessage || 'No messages yet'}</p>
-                    `;
+                    elem.dataset.chatId = conversation.id;
+
+                    const flexDiv = document.createElement('div');
+                    flexDiv.className = 'flex justify-between';
+
+                    const userSpan = document.createElement('span');
+                    userSpan.className = 'font-medium';
+                    userSpan.textContent = conversation.userId;
+
+                    const timeSpan = document.createElement('span');
+                    timeSpan.className = 'text-sm text-gray-500';
+                    timeSpan.textContent = new Date(conversation.updatedAt).toLocaleTimeString();
+
+                    flexDiv.appendChild(userSpan);
+                    flexDiv.appendChild(timeSpan);
+
+                    const p = document.createElement('p');
+                    p.className = 'text-sm text-gray-600 truncate';
+                    p.textContent = conversation.lastMessage || 'No messages yet';
+
+                    elem.appendChild(flexDiv);
+                    elem.appendChild(p);
                     elem.addEventListener('click', () => loadChat(conversation.id));
                     conversationList.appendChild(elem);
                 });
@@ -84,6 +103,15 @@
             function loadChat(chatId) {
                 currentChatId = chatId;
                 document.getElementById('message-form').classList.remove('hidden');
+
+                const conversationElem = document.querySelector(`[data-chat-id="${chatId}"]`);
+                if (conversationElem) {
+                    conversationElem.classList.remove('font-bold');
+                    const badge = conversationElem.querySelector('.new-message-badge');
+                    if (badge) {
+                        badge.remove();
+                    }
+                }
 
                 axios.get(`/api/messages/${chatId}`, {
                     headers: {
@@ -95,20 +123,35 @@
                     chatMessages.innerHTML = '';
 
                     messages.forEach(msg => {
-                        const msgElem = document.createElement('div');
-                        msgElem.className = `mb-4 ${msg.sender === 'admin' ? 'text-right' : 'text-left'}`;
-                        msgElem.innerHTML = `
-                            <div class="inline-block max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg ${msg.sender === 'admin' ? 'bg-blue-100 text-blue-900' : 'bg-gray-200 text-gray-800'}">
-                                <p>${msg.content}</p>
-                                <p class="text-xs text-gray-500 mt-1">${new Date(msg.timestamp).toLocaleTimeString()}</p>
-                            </div>
-                        `;
-                        chatMessages.appendChild(msgElem);
+                        appendMessage(msg.content, msg.sender, msg.timestamp);
                     });
 
                     chatMessages.scrollTop = chatMessages.scrollHeight;
                     document.getElementById('current-chat-title').textContent = `Chat with ${chatId}`;
                 });
+            }
+
+            function appendMessage(content, sender, timestamp) {
+                const chatMessages = document.getElementById('chat-messages');
+                const msgElem = document.createElement('div');
+                const justification = sender === 'admin' ? 'text-right' : 'text-left';
+                msgElem.className = `mb-4 ${justification}`;
+
+                const innerDiv = document.createElement('div');
+                const colors = sender === 'admin' ? 'bg-blue-100 text-blue-900' : 'bg-gray-200 text-gray-800';
+                innerDiv.className = `inline-block max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg ${colors}`;
+
+                const p1 = document.createElement('p');
+                p1.textContent = content;
+
+                const p2 = document.createElement('p');
+                p2.className = 'text-xs text-gray-500 mt-1';
+                p2.textContent = new Date(timestamp).toLocaleTimeString();
+
+                innerDiv.appendChild(p1);
+                innerDiv.appendChild(p2);
+                msgElem.appendChild(innerDiv);
+                chatMessages.appendChild(msgElem);
             }
 
             document.getElementById('send-button').addEventListener('click', () => {
@@ -120,17 +163,7 @@
                         token: localStorage.getItem('adminToken')
                     });
 
-                    // Add message to UI immediately
-                    const chatMessages = document.getElementById('chat-messages');
-                    const msgElem = document.createElement('div');
-                    msgElem.className = 'mb-4 text-right';
-                    msgElem.innerHTML = `
-                        <div class="inline-block max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg bg-blue-100 text-blue-900">
-                            <p>${message}</p>
-                            <p class="text-xs text-gray-500 mt-1">${new Date().toLocaleTimeString()}</p>
-                        </div>
-                    `;
-                    chatMessages.appendChild(msgElem);
+                    appendMessage(message, 'admin', new Date());
                     document.getElementById('message-input').value = '';
                     chatMessages.scrollTop = chatMessages.scrollHeight;
                 }
@@ -138,17 +171,23 @@
 
             socket.on('userMessage', (data) => {
                 if (data.chatId === currentChatId) {
-                    const chatMessages = document.getElementById('chat-messages');
-                    const msgElem = document.createElement('div');
-                    msgElem.className = 'mb-4 text-left';
-                    msgElem.innerHTML = `
-                        <div class="inline-block max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg bg-gray-200 text-gray-800">
-                            <p>${data.message}</p>
-                            <p class="text-xs text-gray-500 mt-1">${new Date(data.timestamp).toLocaleTimeString()}</p>
-                        </div>
-                    `;
-                    chatMessages.appendChild(msgElem);
+                    appendMessage(data.message, data.sender, data.timestamp);
                     chatMessages.scrollTop = chatMessages.scrollHeight;
+                } else {
+                    const conversationElem = document.querySelector(`[data-chat-id="${data.chatId}"]`);
+                    if (conversationElem) {
+                        conversationElem.classList.add('font-bold');
+                        const lastMessage = conversationElem.querySelector('p');
+                        lastMessage.textContent = data.message;
+
+                        let badge = conversationElem.querySelector('.new-message-badge');
+                        if (!badge) {
+                            badge = document.createElement('span');
+                            badge.className = 'new-message-badge bg-red-500 text-white text-xs rounded-full px-2 ml-2';
+                            badge.textContent = 'New';
+                            conversationElem.querySelector('.flex').appendChild(badge);
+                        }
+                    }
                 }
             });
         });
