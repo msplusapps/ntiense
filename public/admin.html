@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatWiz Admin Panel</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
+    <script src="https://unpkg.com/feather-icons"></script>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+</head>
+<body class="bg-gray-100">
+    <custom-navbar></custom-navbar>
+
+    <div class="container mx-auto px-4 py-8">
+        <div class="flex flex-col md:flex-row gap-6">
+            <!-- Sidebar -->
+            <div class="w-full md:w-1/4 bg-white rounded-lg shadow p-4">
+                <h2 class="text-xl font-bold mb-4">Active Conversations</h2>
+                <div id="conversation-list" class="space-y-2">
+                    <!-- Conversations will be loaded here -->
+                </div>
+            </div>
+
+            <!-- Main Chat Area -->
+            <div class="w-full md:w-3/4 bg-white rounded-lg shadow">
+                <div class="p-4 border-b">
+                    <h2 id="current-chat-title" class="text-xl font-bold">Select a conversation</h2>
+                </div>
+                <div id="chat-messages" class="p-4 h-96 overflow-y-auto">
+                    <p class="text-gray-500 text-center py-8">Select a conversation to view messages</p>
+                </div>
+                <div class="p-4 border-t">
+                    <div id="message-form" class="flex gap-2 hidden">
+                        <input type="text" id="message-input" class="flex-1 border rounded px-3 py-2" placeholder="Type your message...">
+                        <button id="send-button" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                            <i data-feather="send"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <custom-footer></custom-footer>
+
+    <script src="components/navbar.js"></script>
+    <script src="components/footer.js"></script>
+    <script src="script.js"></script>
+    <script>
+        feather.replace();
+
+        // Admin specific JS
+        document.addEventListener('DOMContentLoaded', () => {
+            const socket = io();
+            let currentChatId = null;
+
+            // Load initial conversations
+            axios.get('/api/conversations', {
+                headers: {
+                    'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+                }
+            }).then(response => {
+                const conversations = response.data;
+                const conversationList = document.getElementById('conversation-list');
+
+                conversations.forEach(conversation => {
+                    const elem = document.createElement('div');
+                    elem.className = 'p-3 rounded hover:bg-gray-100 cursor-pointer';
+                    elem.innerHTML = `
+                        <div class="flex justify-between">
+                            <span class="font-medium">${conversation.userId}</span>
+                            <span class="text-sm text-gray-500">${new Date(conversation.updatedAt).toLocaleTimeString()}</span>
+                        </div>
+                        <p class="text-sm text-gray-600 truncate">${conversation.lastMessage || 'No messages yet'}</p>
+                    `;
+                    elem.addEventListener('click', () => loadChat(conversation.id));
+                    conversationList.appendChild(elem);
+                });
+            });
+
+            function loadChat(chatId) {
+                currentChatId = chatId;
+                document.getElementById('message-form').classList.remove('hidden');
+
+                axios.get(`/api/messages/${chatId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+                    }
+                }).then(response => {
+                    const messages = response.data;
+                    const chatMessages = document.getElementById('chat-messages');
+                    chatMessages.innerHTML = '';
+
+                    messages.forEach(msg => {
+                        const msgElem = document.createElement('div');
+                        msgElem.className = `mb-4 ${msg.sender === 'admin' ? 'text-right' : 'text-left'}`;
+                        msgElem.innerHTML = `
+                            <div class="inline-block max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg ${msg.sender === 'admin' ? 'bg-blue-100 text-blue-900' : 'bg-gray-200 text-gray-800'}">
+                                <p>${msg.content}</p>
+                                <p class="text-xs text-gray-500 mt-1">${new Date(msg.timestamp).toLocaleTimeString()}</p>
+                            </div>
+                        `;
+                        chatMessages.appendChild(msgElem);
+                    });
+
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                    document.getElementById('current-chat-title').textContent = `Chat with ${chatId}`;
+                });
+            }
+
+            document.getElementById('send-button').addEventListener('click', () => {
+                const message = document.getElementById('message-input').value;
+                if (message.trim() && currentChatId) {
+                    socket.emit('adminMessage', {
+                        chatId: currentChatId,
+                        message: message,
+                        token: localStorage.getItem('adminToken')
+                    });
+
+                    // Add message to UI immediately
+                    const chatMessages = document.getElementById('chat-messages');
+                    const msgElem = document.createElement('div');
+                    msgElem.className = 'mb-4 text-right';
+                    msgElem.innerHTML = `
+                        <div class="inline-block max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg bg-blue-100 text-blue-900">
+                            <p>${message}</p>
+                            <p class="text-xs text-gray-500 mt-1">${new Date().toLocaleTimeString()}</p>
+                        </div>
+                    `;
+                    chatMessages.appendChild(msgElem);
+                    document.getElementById('message-input').value = '';
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+            });
+
+            socket.on('userMessage', (data) => {
+                if (data.chatId === currentChatId) {
+                    const chatMessages = document.getElementById('chat-messages');
+                    const msgElem = document.createElement('div');
+                    msgElem.className = 'mb-4 text-left';
+                    msgElem.innerHTML = `
+                        <div class="inline-block max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg bg-gray-200 text-gray-800">
+                            <p>${data.message}</p>
+                            <p class="text-xs text-gray-500 mt-1">${new Date(data.timestamp).toLocaleTimeString()}</p>
+                        </div>
+                    `;
+                    chatMessages.appendChild(msgElem);
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+            });
+        });
+    </script>
+</body>
+</html>
