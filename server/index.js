@@ -121,6 +121,46 @@ app.get('/api/messages/:chatId', authenticateToken, (req, res) => {
     });
 });
 
+function createOrUpdateAdmin() {
+    const adminUsername = 'admin';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+
+    db.get('SELECT * FROM users WHERE username = ?', [adminUsername], (err, user) => {
+        if (err) {
+            console.error('Error finding admin user:', err);
+            return;
+        }
+
+        bcrypt.hash(adminPassword, 10, (err, hash) => {
+            if (err) {
+                console.error('Error hashing password:', err);
+                return;
+            }
+
+            if (user) {
+                // Update existing admin password
+                db.run('UPDATE users SET password = ? WHERE username = ?', [hash, adminUsername], (err) => {
+                    if (err) {
+                        console.error('Error updating admin user:', err);
+                    } else {
+                        console.log('Admin user password updated.');
+                    }
+                });
+            } else {
+                // Create new admin user
+                db.run('INSERT INTO users (username, password) VALUES (?, ?)', [adminUsername, hash], (err) => {
+                    if (err) {
+                        console.error('Error creating admin user:', err);
+                    } else {
+                        console.log('Admin user created.');
+                    }
+                });
+            }
+        });
+    });
+}
+
 server.listen(3000, () => {
     console.log('listening on *:3000');
+    createOrUpdateAdmin();
 });
