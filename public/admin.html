@@ -10,6 +10,7 @@
     <script src="https://unpkg.com/feather-icons"></script>
     <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jdenticon@3.1.0/dist/jdenticon.min.js"></script>
 </head>
 <body class="bg-gray-100">
     <custom-navbar></custom-navbar>
@@ -18,7 +19,12 @@
         <div class="flex flex-col md:flex-row gap-6">
             <!-- Sidebar -->
             <div class="w-full md:w-1/4 bg-white rounded-lg shadow p-4">
-                <h2 class="text-xl font-bold mb-4">Active Conversations</h2>
+                <h2 class="text-xl font-bold mb-4">Active Users</h2>
+                <div id="user-list" class="space-y-2 mb-6">
+                    <!-- Active users will be loaded here -->
+                </div>
+
+                <h2 class="text-xl font-bold mb-4">Conversations</h2>
                 <div id="conversation-list" class="space-y-2">
                     <!-- Conversations will be loaded here -->
                 </div>
@@ -61,6 +67,20 @@
                 socket.emit('adminConnect', { token: localStorage.getItem('adminToken') });
             });
 
+            socket.on('userList', (users) => {
+                const userList = document.getElementById('user-list');
+                userList.innerHTML = '';
+                users.forEach(user => {
+                    const elem = document.createElement('div');
+                    elem.className = 'flex items-center gap-3 p-2 rounded bg-gray-100';
+                    elem.innerHTML = `
+                        <div class="w-10 h-10 rounded-full overflow-hidden">${user.avatar}</div>
+                        <span class="font-medium">${user.username}</span>
+                    `;
+                    userList.appendChild(elem);
+                });
+            });
+
             // Load initial conversations
             axios.get('/api/conversations', {
                 headers: {
@@ -75,26 +95,22 @@
                     elem.className = 'p-3 rounded hover:bg-gray-100 cursor-pointer';
                     elem.dataset.chatId = conversation.id;
 
+                    const avatar = jdenticon.toSvg(conversation.userId, 40);
+
                     const flexDiv = document.createElement('div');
-                    flexDiv.className = 'flex justify-between';
-
-                    const userSpan = document.createElement('span');
-                    userSpan.className = 'font-medium';
-                    userSpan.textContent = conversation.userId;
-
-                    const timeSpan = document.createElement('span');
-                    timeSpan.className = 'text-sm text-gray-500';
-                    timeSpan.textContent = new Date(conversation.updatedAt).toLocaleTimeString();
-
-                    flexDiv.appendChild(userSpan);
-                    flexDiv.appendChild(timeSpan);
-
-                    const p = document.createElement('p');
-                    p.className = 'text-sm text-gray-600 truncate';
-                    p.textContent = conversation.lastMessage || 'No messages yet';
+                    flexDiv.className = 'flex items-center gap-3';
+                    flexDiv.innerHTML = `
+                        <div class="w-10 h-10 rounded-full overflow-hidden">${avatar}</div>
+                        <div class="flex-1">
+                            <div class="flex justify-between">
+                                <span class="font-medium">${conversation.userId}</span>
+                                <span class="text-sm text-gray-500">${new Date(conversation.updatedAt).toLocaleTimeString()}</span>
+                            </div>
+                            <p class="text-sm text-gray-600 truncate">${conversation.lastMessage || 'No messages yet'}</p>
+                        </div>
+                    `;
 
                     elem.appendChild(flexDiv);
-                    elem.appendChild(p);
                     elem.addEventListener('click', () => loadChat(conversation.id));
                     conversationList.appendChild(elem);
                 });

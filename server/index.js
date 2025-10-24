@@ -7,6 +7,7 @@ const fs = require('fs');
 const db = require('./database');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const jdenticon = require('jdenticon');
 const authenticateToken = require('./authMiddleware');
 
 const app = express();
@@ -37,11 +38,16 @@ io.on('connection', (socket) => {
     socket.on('set username', (data) => {
         const { username, persistentId } = data;
         const conversationId = persistentId;
+        const avatar = jdenticon.toSvg(username, 200);
+
         db.run('INSERT OR IGNORE INTO conversations (id, userId, updatedAt) VALUES (?, ?, ?)',
                [conversationId, username, new Date()], (err) => {
             if (!err) {
                 socket.join(conversationId);
-                users[socket.id] = { username, conversationId };
+                users[socket.id] = { username, conversationId, avatar };
+                if (adminSocket) {
+                    adminSocket.emit('userList', Object.values(users));
+                }
             }
         });
     });
@@ -51,6 +57,7 @@ io.on('connection', (socket) => {
             if (!err && user) {
                 adminSocket = socket;
                 console.log('Admin connected');
+                adminSocket.emit('userList', Object.values(users));
             }
         });
     });
@@ -93,6 +100,13 @@ io.on('connection', (socket) => {
         });
     });
 
+    socket.on('disconnect', () => {
+        console.log('user disconnected');
+        delete users[socket.id];
+        if (adminSocket) {
+            adminSocket.emit('userList', Object.values(users));
+        }
+    });
 });
 
 // Admin login route
