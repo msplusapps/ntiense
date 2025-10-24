@@ -28,7 +28,6 @@ app.get('/embed.js', (req, res) => {
 app.use(express.static('public'));
 app.use(express.json());
 
-let adminSocket = null;
 const users = {};
 
 io.on('connection', (socket) => {
@@ -49,8 +48,8 @@ io.on('connection', (socket) => {
     socket.on('adminConnect', (data) => {
         jwt.verify(data.token, process.env.JWT_SECRET, (err, user) => {
             if (!err && user) {
-                adminSocket = socket;
-                console.log('Admin connected');
+                socket.join('admin-room');
+                console.log('Admin connected and joined admin-room');
             }
         });
     });
@@ -68,9 +67,7 @@ io.on('connection', (socket) => {
 
                     const payload = { chatId: conversationId, message, timestamp, sender: 'user' };
                     io.to(conversationId).emit('userMessage', payload);
-                    if (adminSocket) {
-                        adminSocket.emit('userMessage', payload);
-                    }
+                    io.to('admin-room').emit('userMessage', payload);
                 }
             });
         }
