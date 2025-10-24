@@ -20,7 +20,7 @@ app.get('/embed.js', (req, res) => {
             return;
         }
         const host = req.get('host');
-        const script = data.replace('http://localhost:3000', `http://${host}`);
+        const script = data.replace('http://192.168.0.132:3000', `http://${host}`);
         res.type('application/javascript').send(script);
     });
 });
