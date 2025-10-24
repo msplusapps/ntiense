@@ -7,11 +7,27 @@ const fs = require('fs');
 const db = require('./database');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const cors = require('cors');
 const authenticateToken = require('./authMiddleware');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);
+const io = socketIo(server, {
+    cors: {
+        origin: '*', // Or your frontend URL
+        methods: ['GET', 'POST']
+    }
+});
+
+
+app.use(cors({
+    origin: '*', // Or restrict to your frontend origin
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+app.options('*', cors());
+
 
 app.get('/embed.js', (req, res) => {
     fs.readFile(path.join(__dirname, '..', 'public', 'embed.js'), 'utf8', (err, data) => {
@@ -95,6 +111,8 @@ io.on('connection', (socket) => {
 // Admin login route
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
+    console.log(req.body);
+    
     db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
         if (err || !user) {
             return res.status(401).json({ message: 'Authentication failed' });
