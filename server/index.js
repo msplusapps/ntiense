@@ -9,6 +9,9 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
 const authenticateToken = require('./authMiddleware');
+const port = process.env.PORT;
+const { ip } = require('address');
+const hostIp =  ip();
 
 const app = express();
 const server = http.createServer(app);
@@ -111,13 +114,13 @@ io.on('connection', (socket) => {
 // Admin login route
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
-    console.log(req.body);
     
     db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
         if (err || !user) {
             return res.status(401).json({ message: 'Authentication failed' });
         }
         bcrypt.compare(password, user.password, (err, result) => {
+            console.log(result);
             if (result) {
                 const token = jwt.sign({ username: user.username }, process.env.JWT_SECRET, { expiresIn: '1h' });
                 res.json({ token });
@@ -189,7 +192,8 @@ function createOrUpdateAdmin() {
     });
 }
 
-server.listen(3000, () => {
-    console.log('listening on *:3000');
+server.listen(port, () => {    
+    console.log(`Embaddable http://${hostIp}:${port}`);
+    console.log(`Host link on http://${hostIp}:${port}/admin-login.html`);
     createOrUpdateAdmin();
 });
