@@ -7,7 +7,6 @@
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
-    <script src="https://unpkg.com/feather-icons"></script>
     <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 </head>
@@ -18,10 +17,11 @@
         <div class="flex flex-col md:flex-row gap-6">
             <!-- Sidebar -->
             <div class="w-full md:w-1/4 bg-white rounded-lg shadow p-4">
-                <h2 class="text-xl font-bold mb-4">Active Conversations</h2>
-                <div id="conversation-list" class="space-y-2">
-                    <!-- Conversations will be loaded here -->
-                </div>
+                <h2 class="text-xl font-bold mb-4 flex justify-between items-center">
+                    Active Conversations
+                    <span id="active-count" class="text-sm text-gray-500"></span>
+                </h2>
+                <div id="conversation-list" class="space-y-2"></div>
             </div>
 
             <!-- Main Chat Area -->
@@ -48,145 +48,180 @@
 
     <script src="components/navbar.js"></script>
     <script src="components/footer.js"></script>
-    <script src="script.js"></script>
+
     <script>
         feather.replace();
 
-        // Admin specific JS
-        document.addEventListener('DOMContentLoaded', () => {
-            const socket = io();
+        document.addEventListener('DOMContentLoaded', async () => {
+            const socket = io({ transports: ['websocket'] });
             let currentChatId = null;
+            const token = localStorage.getItem('adminToken');
 
-            socket.on('connect', () => {
-                socket.emit('adminConnect', { token: localStorage.getItem('adminToken') });
-            });
+            const conversationList = document.getElementById('conversation-list');
+            const activeCount = document.getElementById('active-count');
 
-            // Load initial conversations
-            axios.get('/api/conversations', {
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-                }
-            }).then(response => {
-                const conversations = response.data;
-                const conversationList = document.getElementById('conversation-list');
-
-                conversations.forEach(conversation => {
-                    const elem = document.createElement('div');
-                    elem.className = 'p-3 rounded hover:bg-gray-100 cursor-pointer';
-                    elem.dataset.chatId = conversation.id;
-
-                    const flexDiv = document.createElement('div');
-                    flexDiv.className = 'flex justify-between';
-
-                    const userSpan = document.createElement('span');
-                    userSpan.className = 'font-medium';
-                    userSpan.textContent = conversation.userId;
-
-                    const timeSpan = document.createElement('span');
-                    timeSpan.className = 'text-sm text-gray-500';
-                    timeSpan.textContent = new Date(conversation.updatedAt).toLocaleTimeString();
-
-                    flexDiv.appendChild(userSpan);
-                    flexDiv.appendChild(timeSpan);
-
-                    const p = document.createElement('p');
-                    p.className = 'text-sm text-gray-600 truncate';
-                    p.textContent = conversation.lastMessage || 'No messages yet';
-
-                    elem.appendChild(flexDiv);
-                    elem.appendChild(p);
-                    elem.addEventListener('click', () => loadChat(conversation.id));
-                    conversationList.appendChild(elem);
-                });
-            });
-
-            function loadChat(chatId) {
-                currentChatId = chatId;
-                document.getElementById('message-form').classList.remove('hidden');
-
-                const conversationElem = document.querySelector(`[data-chat-id="${chatId}"]`);
-                if (conversationElem) {
-                    conversationElem.classList.remove('font-bold');
-                    const badge = conversationElem.querySelector('.new-message-badge');
-                    if (badge) {
-                        badge.remove();
-                    }
-                }
-
-                axios.get(`/api/messages/${chatId}`, {
-                    headers: {
-                        'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-                    }
-                }).then(response => {
-                    const messages = response.data;
-                    const chatMessages = document.getElementById('chat-messages');
-                    chatMessages.innerHTML = '';
-
-                    messages.forEach(msg => {
-                        appendMessage(msg.content, msg.sender, msg.timestamp);
-                    });
-
-                    chatMessages.scrollTop = chatMessages.scrollHeight;
-                    document.getElementById('current-chat-title').textContent = `Chat with ${chatId}`;
-                });
+            if (!token) {
+                alert('Please log in as admin first.');
+                window.location.href = '/admin-login.html';
+                return;
             }
 
-            function appendMessage(content, sender, timestamp) {
+            // ✅ Admin connects to the server
+            socket.on('connect', () => {
+                socket.emit('adminConnect', { token });
+                console.log('🔗 Admin connected to server');
+            });
+
+            socket.on('adminConnected', () => {
+                console.log('✅ Admin verified and joined admin-room');
+            });
+
+            socket.on('connect_error', (err) => {
+                console.error('❌ Connection error:', err.message);
+            });
+
+            // ✅ Load initial conversations
+            async function loadConversations() {
+                try {
+                    const res = await axios.get('/api/conversations', {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+
+                    const conversations = res.data;
+                    conversationList.innerHTML = '';
+                    activeCount.textContent = `${conversations.length} active`;
+
+                    if (conversations.length === 0) {
+                        conversationList.innerHTML = `<p class="text-gray-500">No active conversations.</p>`;
+                    } else {
+                        conversations.forEach(addConversationToUI);
+                    }
+                } catch (err) {
+                    console.error('Error loading conversations:', err);
+                }
+            }
+
+            loadConversations();
+
+            // ✅ Add a conversation element to the sidebar
+            function addConversationToUI(conversation) {
+                const elem = document.createElement('div');
+                elem.className = 'p-3 rounded hover:bg-gray-100 cursor-pointer';
+                elem.dataset.chatId = conversation.id;
+
+                const flexDiv = document.createElement('div');
+                flexDiv.className = 'flex justify-between items-center';
+
+                const userSpan = document.createElement('span');
+                userSpan.className = 'font-medium';
+                userSpan.textContent = `User ${conversation.userId}`;
+
+                const timeSpan = document.createElement('span');
+                timeSpan.className = 'text-sm text-gray-500';
+                timeSpan.textContent = new Date(conversation.updatedAt).toLocaleTimeString();
+
+                flexDiv.appendChild(userSpan);
+                flexDiv.appendChild(timeSpan);
+
+                const p = document.createElement('p');
+                p.className = 'text-sm text-gray-600 truncate';
+                p.textContent = conversation.lastMessage || 'No messages yet';
+
+                elem.appendChild(flexDiv);
+                elem.appendChild(p);
+                elem.addEventListener('click', () => loadChat(conversation.id));
+
+                conversationList.prepend(elem); // add to top
+                activeCount.textContent = `${conversationList.childElementCount} active`;
+            }
+
+            // ✅ Load chat messages for selected user
+            async function loadChat(chatId) {
+                currentChatId = chatId;
+                document.getElementById('message-form').classList.remove('hidden');
                 const chatMessages = document.getElementById('chat-messages');
+                chatMessages.innerHTML = '';
+
+                try {
+                    const res = await axios.get(`/api/messages/${chatId}`, {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    const messages = res.data;
+
+                    messages.forEach(msg => appendMessage(msg.content, msg.sender, msg.timestamp));
+                    document.getElementById('current-chat-title').textContent = `Chat with ${chatId}`;
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                } catch (err) {
+                    console.error('Error loading chat messages:', err);
+                }
+            }
+
+            // ✅ Send message
+            const sendButton = document.getElementById('send-button');
+            const messageInput = document.getElementById('message-input');
+            const chatMessages = document.getElementById('chat-messages');
+
+            sendButton.addEventListener('click', () => {
+                const message = messageInput.value.trim();
+                if (message && currentChatId) {
+                    socket.emit('adminMessage', { chatId: currentChatId, message, token });
+                    appendMessage(message, 'admin', new Date());
+                    messageInput.value = '';
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+            });
+
+            // ✅ Append chat message
+            function appendMessage(content, sender, timestamp) {
                 const msgElem = document.createElement('div');
-                const justification = sender === 'admin' ? 'text-right' : 'text-left';
-                msgElem.className = `mb-4 ${justification}`;
+                const alignment = sender === 'admin' ? 'text-right' : 'text-left';
+                msgElem.className = `mb-4 ${alignment}`;
 
-                const innerDiv = document.createElement('div');
-                const colors = sender === 'admin' ? 'bg-blue-100 text-blue-900' : 'bg-gray-200 text-gray-800';
-                innerDiv.className = `inline-block max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg ${colors}`;
+                const bubble = document.createElement('div');
+                const color = sender === 'admin' ? 'bg-blue-100 text-blue-900' : 'bg-gray-200 text-gray-800';
+                bubble.className = `inline-block px-4 py-2 rounded-lg max-w-md ${color}`;
 
-                const p1 = document.createElement('p');
-                p1.textContent = content;
+                bubble.innerHTML = `
+                    <p>${content}</p>
+                    <p class="text-xs text-gray-500 mt-1">${new Date(timestamp).toLocaleTimeString()}</p>
+                `;
 
-                const p2 = document.createElement('p');
-                p2.className = 'text-xs text-gray-500 mt-1';
-                p2.textContent = new Date(timestamp).toLocaleTimeString();
-
-                innerDiv.appendChild(p1);
-                innerDiv.appendChild(p2);
-                msgElem.appendChild(innerDiv);
+                msgElem.appendChild(bubble);
                 chatMessages.appendChild(msgElem);
             }
 
-            document.getElementById('send-button').addEventListener('click', () => {
-                const message = document.getElementById('message-input').value;
-                if (message.trim() && currentChatId) {
-                    socket.emit('adminMessage', {
-                        chatId: currentChatId,
-                        message: message,
-                        token: localStorage.getItem('adminToken')
-                    });
-
-                    appendMessage(message, 'admin', new Date());
-                    document.getElementById('message-input').value = '';
-                    chatMessages.scrollTop = chatMessages.scrollHeight;
-                }
+            // ✅ Listen for new user connection (Real-time)
+            socket.on('newUserConnected', (data) => {
+                console.log('🟢 New user connected:', data);
+                const conversation = {
+                    id: data.chatId,
+                    userId: data.userId,
+                    lastMessage: 'New conversation started',
+                    updatedAt: new Date()
+                };
+                addConversationToUI(conversation);
             });
 
+            // ✅ Receive live messages
             socket.on('userMessage', (data) => {
                 if (data.chatId === currentChatId) {
                     appendMessage(data.message, data.sender, data.timestamp);
                     chatMessages.scrollTop = chatMessages.scrollHeight;
                 } else {
-                    const conversationElem = document.querySelector(`[data-chat-id="${data.chatId}"]`);
-                    if (conversationElem) {
-                        conversationElem.classList.add('font-bold');
-                        const lastMessage = conversationElem.querySelector('p');
-                        lastMessage.textContent = data.message;
-
-                        let badge = conversationElem.querySelector('.new-message-badge');
-                        if (!badge) {
-                            badge = document.createElement('span');
-                            badge.className = 'new-message-badge bg-red-500 text-white text-xs rounded-full px-2 ml-2';
-                            badge.textContent = 'New';
-                            conversationElem.querySelector('.flex').appendChild(badge);
-                        }
+                    const elem = document.querySelector(`[data-chat-id="${data.chatId}"]`);
+                    if (elem) {
+                        const lastMsg = elem.querySelector('p');
+                        lastMsg.textContent = data.message;
+                        elem.classList.add('font-bold');
+                    } else {
+                        // If new chat not listed yet
+                        const newConv = {
+                            id: data.chatId,
+                            userId: data.sender,
+                            lastMessage: data.message,
+                            updatedAt: new Date()
+                        };
+                        addConversationToUI(newConv);
                     }
                 }
             });

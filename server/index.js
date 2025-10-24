@@ -6,32 +6,32 @@ const path = require('path');
 const fs = require('fs');
 const db = require('./database');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
 const cors = require('cors');
 const authenticateToken = require('./authMiddleware');
-const port = process.env.PORT;
 const { ip } = require('address');
-const hostIp =  ip();
+
+const port = process.env.PORT || 5555;
+const hostIp = ip();
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
-        origin: '*', // Or your frontend URL
+        origin: '*',
         methods: ['GET', 'POST']
     }
 });
 
-
 app.use(cors({
-    origin: '*', // Or restrict to your frontend origin
+    origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
 app.options('*', cors());
+app.use(express.static('public'));
+app.use(express.json());
 
-
+// ========== Serve embed.js ==========
 app.get('/embed.js', (req, res) => {
     fs.readFile(path.join(__dirname, '..', 'public', 'embed.js'), 'utf8', (err, data) => {
         if (err) {
@@ -44,156 +44,137 @@ app.get('/embed.js', (req, res) => {
     });
 });
 
-app.use(express.static('public'));
-app.use(express.json());
+const users = {}; // Store connected users
 
-const users = {};
-
+// ========== SOCKET.IO ==========
 io.on('connection', (socket) => {
-    console.log('a user connected');
+    console.log('🟢 New socket connected:', socket.id);
 
-    socket.on('set username', (data) => {
-        const { username, persistentId } = data;
-        const conversationId = persistentId;
-        db.run('INSERT OR IGNORE INTO conversations (id, userId, updatedAt) VALUES (?, ?, ?)',
-               [conversationId, username, new Date()], (err) => {
-            if (!err) {
-                socket.join(conversationId);
-                users[socket.id] = { username, conversationId };
-            }
-        });
-    });
-
+    // 🔹 Admin connects
     socket.on('adminConnect', (data) => {
         jwt.verify(data.token, process.env.JWT_SECRET, (err, user) => {
             if (!err && user) {
                 socket.join('admin-room');
-                console.log('Admin connected and joined admin-room');
+                console.log('🧑‍💼 Admin connected and joined admin-room');
+                socket.emit('adminConnected', { message: 'Admin connected successfully' });
+            } else {
+                console.warn('❌ Invalid admin token');
             }
         });
     });
 
-    socket.on('userMessage', (data) => {
-        const { message } = data;
-        const conversationId = users[socket.id]?.conversationId;
-        if (conversationId) {
-            const timestamp = new Date();
-            db.run('INSERT INTO messages (conversationId, sender, content, timestamp) VALUES (?, ?, ?, ?)',
-                   [conversationId, 'user', message, timestamp], (err) => {
-                if (!err) {
-                    db.run('UPDATE conversations SET lastMessage = ?, updatedAt = ? WHERE id = ?',
-                           [message, timestamp, conversationId]);
-
-                    const payload = { chatId: conversationId, message, timestamp, sender: 'user' };
-                    io.to(conversationId).emit('userMessage', payload);
-                    io.to('admin-room').emit('userMessage', payload);
-                }
-            });
-        }
+    // 🔹 User logs in (emit this after login)
+    socket.on('userLogin', (data) => {
+        console.log(`👤 User logged in: ${data.username}`);
+        
+        // Notify all admins in admin-room
+        io.to('admin-room').emit('userConnected', {
+            username: data.username,
+            timestamp: new Date().toISOString()
+        });
     });
 
+    // 🔹 Handle messages from admin
     socket.on('adminMessage', (data) => {
-        const { chatId, message, token } = data;
-        jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+        jwt.verify(data.token, process.env.JWT_SECRET, (err, user) => {
             if (!err && user) {
-                const timestamp = new Date();
-                db.run('INSERT INTO messages (conversationId, sender, content, timestamp) VALUES (?, ?, ?, ?)',
-                       [chatId, 'admin', message, timestamp], (err) => {
-                    if (!err) {
-                        db.run('UPDATE conversations SET lastMessage = ?, updatedAt = ? WHERE id = ?',
-                               [message, timestamp, chatId]);
-                        io.to(chatId).emit('userMessage', { chatId, message, timestamp, sender: 'admin' });
-                    }
+                io.emit('messageFromAdmin', {
+                    sender: 'Admin',
+                    message: data.message,
+                    timestamp: new Date().toISOString()
                 });
             }
         });
     });
 
-});
-
-// Admin login route
-app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
-    
-    db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
-        if (err || !user) {
-            return res.status(401).json({ message: 'Authentication failed' });
-        }
-        bcrypt.compare(password, user.password, (err, result) => {
-            console.log(result);
-            if (result) {
-                const token = jwt.sign({ username: user.username }, process.env.JWT_SECRET, { expiresIn: '1h' });
-                res.json({ token });
-            } else {
-                res.status(401).json({ message: 'Authentication failed' });
-            }
-        });
+    // Optional: handle messages from user
+    socket.on('messageFromUser', (data) => {
+        io.to('admin-room').emit('messageFromUser', data);
     });
 });
 
-// API routes
+
+// ========== REST API ROUTES ==========
+
+// 🔐 Admin login
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+
+    db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
+        if (err || !user) return res.status(401).json({ message: 'Authentication failed' });
+
+        // Simple password check (no bcrypt)
+        if (password === user.password) {
+            const token = jwt.sign({ username: user.username }, process.env.JWT_SECRET, { expiresIn: '2h' });
+            res.json({ token });
+        } else {
+            res.status(401).json({ message: 'Authentication failed' });
+        }
+    });
+});
+
+// 📄 Get all conversations
 app.get('/api/conversations', authenticateToken, (req, res) => {
     db.all('SELECT * FROM conversations ORDER BY updatedAt DESC', [], (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
+        if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
     });
 });
 
+// 💬 Get messages of a conversation
 app.get('/api/messages/:chatId', authenticateToken, (req, res) => {
     const { chatId } = req.params;
     db.all('SELECT * FROM messages WHERE conversationId = ? ORDER BY timestamp ASC', [chatId], (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
+        if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
     });
 });
 
+// ✉️ Send a message (admin or system)
+app.post('/api/messages/:chatId', authenticateToken, (req, res) => {
+    const { chatId } = req.params;
+    const { sender, content } = req.body;
+    const timestamp = new Date();
+
+    if (!sender || !content) return res.status(400).json({ message: 'Sender and content are required.' });
+
+    db.run(
+        'INSERT INTO messages (conversationId, sender, content, timestamp) VALUES (?, ?, ?, ?)',
+        [chatId, sender, content, timestamp],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+
+            io.to(chatId).emit('messageFromAdmin', { chatId, content, sender, timestamp });
+            res.json({ id: this.lastID, chatId, sender, content, timestamp });
+        }
+    );
+});
+
+// ========== ADMIN CREATION ==========
 function createOrUpdateAdmin() {
     const adminUsername = 'admin';
     const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
 
     db.get('SELECT * FROM users WHERE username = ?', [adminUsername], (err, user) => {
-        if (err) {
-            console.error('Error finding admin user:', err);
-            return;
+        if (err) return console.error('Error finding admin user:', err);
+
+        if (user) {
+            db.run('UPDATE users SET password = ? WHERE username = ?', [adminPassword, adminUsername], (err) => {
+                if (err) console.error('Error updating admin user:', err);
+                else console.log('✅ Admin user password updated.');
+            });
+        } else {
+            db.run('INSERT INTO users (username, password) VALUES (?, ?)', [adminUsername, adminPassword], (err) => {
+                if (err) console.error('Error creating admin user:', err);
+                else console.log('✅ Admin user created.');
+            });
         }
-
-        bcrypt.hash(adminPassword, 10, (err, hash) => {
-            if (err) {
-                console.error('Error hashing password:', err);
-                return;
-            }
-
-            if (user) {
-                // Update existing admin password
-                db.run('UPDATE users SET password = ? WHERE username = ?', [hash, adminUsername], (err) => {
-                    if (err) {
-                        console.error('Error updating admin user:', err);
-                    } else {
-                        console.log('Admin user password updated.');
-                    }
-                });
-            } else {
-                // Create new admin user
-                db.run('INSERT INTO users (username, password) VALUES (?, ?)', [adminUsername, hash], (err) => {
-                    if (err) {
-                        console.error('Error creating admin user:', err);
-                    } else {
-                        console.log('Admin user created.');
-                    }
-                });
-            }
-        });
     });
 }
 
-server.listen(port, () => {    
-    console.log(`Embaddable http://${hostIp}:${port}`);
-    console.log(`Host link on http://${hostIp}:${port}/admin-login.html`);
+// ========== SERVER START ==========
+server.listen(port, () => {
+    console.log(`🚀 Server running on: http://${hostIp}:${port}`);
+    console.log(`🧭 Admin panel: http://${hostIp}:${port}/admin-login.html`);
     createOrUpdateAdmin();
 });
