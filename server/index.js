@@ -1,4 +1,9 @@
 require('dotenv').config();
+
+if (!process.env.JWT_SECRET) {
+    console.error('FATAL ERROR: JWT_SECRET is not defined.');
+    process.exit(1);
+}
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -28,8 +33,14 @@ app.get('/embed.js', (req, res) => {
 app.use(express.static('public'));
 app.use(express.json());
 
-let adminSocket = null;
+const adminSockets = new Set();
 const users = {};
+
+const updateUsers = () => {
+    adminSockets.forEach(socket => {
+        socket.emit('userList', Object.values(users));
+    });
+};
 
 io.on('connection', (socket) => {
     console.log('a user connected');
@@ -37,20 +48,32 @@ io.on('connection', (socket) => {
     socket.on('set username', (data) => {
         const { username, persistentId } = data;
         const conversationId = persistentId;
-        db.run('INSERT OR IGNORE INTO conversations (id, userId, updatedAt) VALUES (?, ?, ?)',
-               [conversationId, username, new Date()], (err) => {
-            if (!err) {
-                socket.join(conversationId);
-                users[socket.id] = { username, conversationId };
-            }
+        db.get('SELECT id FROM conversations WHERE id = ?', [conversationId], (err, row) => {
+            const isNew = !row;
+            db.run('INSERT OR IGNORE INTO conversations (id, userId, updatedAt) VALUES (?, ?, ?)',
+                   [conversationId, username, new Date()], (err) => {
+                if (!err) {
+                    socket.join(conversationId);
+                    users[socket.id] = { username, conversationId };
+                    updateUsers();
+
+                    if (isNew) {
+                        const newConversation = { id: conversationId, userId: username, updatedAt: new Date(), lastMessage: '' };
+                        adminSockets.forEach(socket => {
+                            socket.emit('newConversation', newConversation);
+                        });
+                    }
+                }
+            });
         });
     });
 
     socket.on('adminConnect', (data) => {
         jwt.verify(data.token, process.env.JWT_SECRET, (err, user) => {
             if (!err && user) {
-                adminSocket = socket;
+                adminSockets.add(socket);
                 console.log('Admin connected');
+                updateUsers();
             }
         });
     });
@@ -68,9 +91,9 @@ io.on('connection', (socket) => {
 
                     const payload = { chatId: conversationId, message, timestamp, sender: 'user' };
                     io.to(conversationId).emit('userMessage', payload);
-                    if (adminSocket) {
-                        adminSocket.emit('userMessage', payload);
-                    }
+                    adminSockets.forEach(socket => {
+                        socket.emit('userMessage', payload);
+                    });
                 }
             });
         }
@@ -93,6 +116,16 @@ io.on('connection', (socket) => {
         });
     });
 
+    socket.on('disconnect', () => {
+        if (adminSockets.has(socket)) {
+            adminSockets.delete(socket);
+            console.log('Admin disconnected');
+        } else {
+            console.log('user disconnected');
+            delete users[socket.id];
+            updateUsers();
+        }
+    });
 });
 
 // Admin login route

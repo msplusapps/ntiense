@@ -18,7 +18,12 @@
         <div class="flex flex-col md:flex-row gap-6">
             <!-- Sidebar -->
             <div class="w-full md:w-1/4 bg-white rounded-lg shadow p-4">
-                <h2 class="text-xl font-bold mb-4">Active Conversations</h2>
+                <h2 class="text-xl font-bold mb-4">Active Users</h2>
+                <div id="user-list" class="space-y-2 mb-6">
+                    <!-- Active users will be loaded here -->
+                </div>
+
+                <h2 class="text-xl font-bold mb-4">Conversations</h2>
                 <div id="conversation-list" class="space-y-2">
                     <!-- Conversations will be loaded here -->
                 </div>
@@ -61,6 +66,47 @@
                 socket.emit('adminConnect', { token: localStorage.getItem('adminToken') });
             });
 
+            socket.on('userList', (users) => {
+                const userList = document.getElementById('user-list');
+                userList.innerHTML = '';
+                users.forEach(user => {
+                    const elem = document.createElement('div');
+                    elem.className = 'p-2 rounded bg-gray-100';
+                    elem.textContent = user.username;
+                    userList.appendChild(elem);
+                });
+            });
+
+            function renderConversation(conversation) {
+                const conversationList = document.getElementById('conversation-list');
+                const elem = document.createElement('div');
+                elem.className = 'p-3 rounded hover:bg-gray-100 cursor-pointer';
+                elem.dataset.chatId = conversation.id;
+
+                const flexDiv = document.createElement('div');
+                flexDiv.className = 'flex justify-between';
+
+                const userSpan = document.createElement('span');
+                userSpan.className = 'font-medium';
+                userSpan.textContent = conversation.userId;
+
+                const timeSpan = document.createElement('span');
+                timeSpan.className = 'text-sm text-gray-500';
+                timeSpan.textContent = new Date(conversation.updatedAt).toLocaleTimeString();
+
+                flexDiv.appendChild(userSpan);
+                flexDiv.appendChild(timeSpan);
+
+                const p = document.createElement('p');
+                p.className = 'text-sm text-gray-600 truncate';
+                p.textContent = conversation.lastMessage || 'No messages yet';
+
+                elem.appendChild(flexDiv);
+                elem.appendChild(p);
+                elem.addEventListener('click', () => loadChat(conversation.id));
+                conversationList.prepend(elem);
+            }
+
             // Load initial conversations
             axios.get('/api/conversations', {
                 headers: {
@@ -68,36 +114,11 @@
                 }
             }).then(response => {
                 const conversations = response.data;
-                const conversationList = document.getElementById('conversation-list');
+                conversations.forEach(renderConversation);
+            });
 
-                conversations.forEach(conversation => {
-                    const elem = document.createElement('div');
-                    elem.className = 'p-3 rounded hover:bg-gray-100 cursor-pointer';
-                    elem.dataset.chatId = conversation.id;
-
-                    const flexDiv = document.createElement('div');
-                    flexDiv.className = 'flex justify-between';
-
-                    const userSpan = document.createElement('span');
-                    userSpan.className = 'font-medium';
-                    userSpan.textContent = conversation.userId;
-
-                    const timeSpan = document.createElement('span');
-                    timeSpan.className = 'text-sm text-gray-500';
-                    timeSpan.textContent = new Date(conversation.updatedAt).toLocaleTimeString();
-
-                    flexDiv.appendChild(userSpan);
-                    flexDiv.appendChild(timeSpan);
-
-                    const p = document.createElement('p');
-                    p.className = 'text-sm text-gray-600 truncate';
-                    p.textContent = conversation.lastMessage || 'No messages yet';
-
-                    elem.appendChild(flexDiv);
-                    elem.appendChild(p);
-                    elem.addEventListener('click', () => loadChat(conversation.id));
-                    conversationList.appendChild(elem);
-                });
+            socket.on('newConversation', (conversation) => {
+                renderConversation(conversation);
             });
 
             function loadChat(chatId) {
